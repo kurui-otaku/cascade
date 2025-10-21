@@ -50,6 +50,7 @@ mod tests {
         Router,
         body::Body,
         http::{Request, StatusCode, header},
+        response::Response,
     };
     use http_body_util::BodyExt;
     use rstest::*;
@@ -149,11 +150,32 @@ mod tests {
         Router::new().nest("/api", create_user_router(login_usecase))
     }
 
+    // Login usecase
+
+    /// # Description
+    ///
+    /// This function is general login handler
+    /// Call this function from test case for login
+
+    async fn login(app: Router, body: String) -> Response {
+        app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
     #[rstest]
     #[tokio::test]
-    async fn test_login(#[future] test_app: Router) {
+    async fn test_login_positive(#[future] test_app: Router) {
         let app = test_app.await;
 
+        // create request body
         let user_id = "testuser".to_string();
         let password = "test_password".to_string();
         let login_request = LoginRequest {
@@ -161,22 +183,58 @@ mod tests {
             password: password.clone(),
         };
         let body = serde_json::to_string(&login_request).unwrap();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/login")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+
+        // send request
+        let response = login(app, body).await;
+
+        // validation
         assert_eq!(response.status(), StatusCode::OK);
         let body = response.into_body();
         let bytes = body.collect().await.unwrap().to_bytes();
         let login_response: LoginResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(TEST_ID, login_response.user.id);
         assert_eq!(user_id, login_response.user.acct);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_login_invalid_user_negative(#[future] test_app: Router) {
+        let app = test_app.await;
+
+        // create request body
+        let user_id = "invalid_user".to_string();
+        let password = "test_password".to_string();
+        let login_request = LoginRequest {
+            user_id: user_id.clone(),
+            password: password.clone(),
+        };
+        let body = serde_json::to_string(&login_request).unwrap();
+
+        // send request
+        let response = login(app, body).await;
+
+        // validation
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_login_invalid_password_negative(#[future] test_app: Router) {
+        let app = test_app.await;
+
+        // create request body
+        let user_id = "test_password".to_string();
+        let password = "test_password".to_string();
+        let login_request = LoginRequest {
+            user_id: user_id.clone(),
+            password: password.clone(),
+        };
+        let body = serde_json::to_string(&login_request).unwrap();
+
+        // send request
+        let response = login(app, body).await;
+
+        // validation
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
