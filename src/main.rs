@@ -17,10 +17,7 @@ use crate::{
         user_repository::PostgresUserRepository,
     },
     presentation::handlers::user_handler::create_user_router,
-    usecase::{
-        login_usecase::LoginUsecase,
-        register_user_usecase::{self, RegisterUserUsecase},
-    },
+    usecase::{login_usecase::LoginUsecase, register_user_usecase::RegisterUserUsecase},
 };
 
 #[tokio::main]
@@ -124,7 +121,9 @@ mod tests {
             email: String,
         ) -> Result<(), RepositoryError> {
             if email.contains("duplicated") {
-                Err(RepositoryError::DatabaseError("Email already exists".to_string()))
+                Err(RepositoryError::DatabaseError(
+                    "Email already exists".to_string(),
+                ))
             } else {
                 Ok(())
             }
@@ -167,7 +166,9 @@ mod tests {
             _display_name: &str,
         ) -> Result<Uuid, RepositoryError> {
             if activity_id.as_str().contains("duplicated_user") {
-                Err(RepositoryError::DatabaseError("User already exists".to_string()))
+                Err(RepositoryError::DatabaseError(
+                    "User already exists".to_string(),
+                ))
             } else {
                 Ok(Uuid::parse_str(TEST_ID).unwrap())
             }
@@ -187,9 +188,13 @@ mod tests {
             email: String,
         ) -> Result<User, RepositoryError> {
             if activity_id.as_str().contains("duplicated_user") {
-                Err(RepositoryError::DatabaseError("User already exists".to_string()))
+                Err(RepositoryError::DatabaseError(
+                    "User already exists".to_string(),
+                ))
             } else if email.contains("duplicated") {
-                Err(RepositoryError::DatabaseError("Email already exists".to_string()))
+                Err(RepositoryError::DatabaseError(
+                    "Email already exists".to_string(),
+                ))
             } else {
                 let id = Uuid::parse_str(TEST_ID).unwrap();
                 let user = User::new(id, activity_id.clone(), display_name.to_string(), None)
@@ -391,7 +396,10 @@ mod tests {
             let body = response.into_body();
             let bytes = body.collect().await.unwrap().to_bytes();
             let error_msg = String::from_utf8(bytes.to_vec()).unwrap();
-            panic!("Expected CREATED but got {:?}. Error: {}", status, error_msg);
+            panic!(
+                "Expected CREATED but got {:?}. Error: {}",
+                status, error_msg
+            );
         }
         assert_eq!(status, StatusCode::CREATED);
         let body = response.into_body();

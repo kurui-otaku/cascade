@@ -10,7 +10,7 @@ sea-orm = { version = "1.1.16", features = ["sqlx-mysql", "runtime-tokio-rustls"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
-entity = {path = "../entity"}
+entity = { path = "../sns-shared/entity" }
 dotenvy = "0.15.7"
 bacon = "3.18.0"
 async-trait = "0.1.89"
