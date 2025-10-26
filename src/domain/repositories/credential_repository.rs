@@ -1,15 +1,22 @@
 use async_trait::async_trait;
+use uuid::Uuid;
 
 use crate::domain::{
     error::RepositoryError,
-    models::credential::{Credential, HashedPassword},
+    models::{
+        credential::{Credential, HashedPassword},
+        user::ActivityId,
+    },
 };
 
 #[async_trait]
 pub trait CredentialRepository {
-    async fn get_credential(
+    async fn get_credential(&self, user_id: String) -> Result<Credential, RepositoryError>;
+    async fn create_credential(
         &self,
-        user_id: String,
+        id: Uuid,
+        user_id: ActivityId,
         password_hash: HashedPassword,
-    ) -> Result<Credential, RepositoryError>;
+        email: String,
+    ) -> Result<(), RepositoryError>;
 }

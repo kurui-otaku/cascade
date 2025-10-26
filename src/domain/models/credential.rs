@@ -1,49 +1,20 @@
-use argon2::{
-    Argon2, PasswordHash as Argon2Hash,
-    password_hash::{PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
-};
 use chrono::{DateTime, Utc};
 use sea_orm::prelude::Uuid;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::error::DomainError;
 
+/// Value object representing a hashed password
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HashedPassword(String);
 
 impl HashedPassword {
-    pub fn from_password(plain_password: &str) -> Result<Self, DomainError> {
-        if plain_password.len() < 8 {
-            return Err(DomainError::WeakPassword);
-        }
-
-        let salt = SaltString::generate(OsRng);
-        let argon2 = Argon2::default();
-
-        let hash = argon2
-            .hash_password(plain_password.as_bytes(), &salt)
-            .map_err(|_| DomainError::InvalidCredentials)?
-            .to_string();
-
-        Ok(Self(hash))
+    /// Create a new HashedPassword from an already hashed string
+    pub fn new(hash: String) -> Self {
+        Self(hash)
     }
 
-    pub fn from_string(hash: String) -> Result<Self, DomainError> {
-        Argon2Hash::new(&hash).map_err(|_| DomainError::InvalidCredentials)?;
-        Ok(Self(hash))
-    }
-
-    pub fn verify(&self, plain_password: &str) -> bool {
-        let parsed_hash = match Argon2Hash::new(&self.0) {
-            Ok(h) => h,
-            Err(_) => return false,
-        };
-
-        Argon2::default()
-            .verify_password(plain_password.as_bytes(), &parsed_hash)
-            .is_ok()
-    }
-
+    /// Get the hash as a string slice
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -86,8 +57,8 @@ impl Credential {
         }
     }
 
-    pub fn verify_password(&self, plain_password: &str) -> Result<(), DomainError> {
-        if self.password_hash.verify(plain_password) {
+    pub fn validate(&self, is_valid: bool) -> Result<(), DomainError> {
+        if is_valid {
             Ok(())
         } else {
             Err(DomainError::AuthenticationFailed)
