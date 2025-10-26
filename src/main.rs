@@ -70,7 +70,6 @@ mod tests {
         response::Response,
     };
     use http_body_util::BodyExt;
-    use rstest::*;
     use sea_orm::{ActiveModelTrait, ConnectOptions, Database, Set};
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -93,23 +92,70 @@ mod tests {
 
     const TEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-    #[fixture]
-    async fn test_app() -> Router {
+    async fn setup_test_db() -> (Router, sea_orm::DatabaseConnection, String) {
         dotenvy::from_path("../.env").unwrap();
+
+        // Create unique schema for this test
+        let schema_name = format!("test_{}", Uuid::new_v4().to_string().replace('-', "_"));
+
+        // Connect to create schema
         let mut opt = ConnectOptions::new(dotenvy::var("TEST_DATABASE_URL").unwrap());
         opt.max_connections(10)
             .min_connections(1)
             .sqlx_logging(true);
 
-        let db = Database::connect(opt)
+        let db_init = Database::connect(opt)
             .await
             .expect("Connection to DB failed");
 
-        // Truncate tables for clean test environment
         use sea_orm::ConnectionTrait;
-        db.execute_unprepared("TRUNCATE TABLE credentials, users RESTART IDENTITY CASCADE")
+        db_init.execute_unprepared(&format!("CREATE SCHEMA {}", schema_name))
             .await
-            .expect("Failed to truncate tables");
+            .expect("Failed to create schema");
+
+        // Reconnect with schema in search_path
+        let base_url = dotenvy::var("TEST_DATABASE_URL").unwrap();
+        let url_with_schema = if base_url.contains('?') {
+            format!("{}&options=-c%20search_path%3D{},public", base_url, schema_name)
+        } else {
+            format!("{}?options=-c%20search_path%3D{},public", base_url, schema_name)
+        };
+
+        let mut opt_with_schema = ConnectOptions::new(url_with_schema);
+        opt_with_schema
+            .max_connections(10)
+            .min_connections(1)
+            .sqlx_logging(true);
+
+        let db = Database::connect(opt_with_schema)
+            .await
+            .expect("Connection to DB failed");
+
+        // Create tables in the new schema
+        db.execute_unprepared(&format!(r#"
+            CREATE TABLE {}.users (
+                id UUID PRIMARY KEY,
+                activity_id VARCHAR NOT NULL UNIQUE,
+                name VARCHAR NOT NULL,
+                summary VARCHAR NOT NULL,
+                icon VARCHAR
+            )
+        "#, schema_name))
+            .await
+            .expect("Failed to create users table");
+
+        db.execute_unprepared(&format!(r#"
+            CREATE TABLE {}.credentials (
+                user_id UUID PRIMARY KEY REFERENCES {}.users(id) ON DELETE CASCADE,
+                activity_id VARCHAR NOT NULL UNIQUE,
+                password_hash VARCHAR NOT NULL,
+                email VARCHAR NOT NULL UNIQUE,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+            )
+        "#, schema_name, schema_name))
+            .await
+            .expect("Failed to create credentials table");
 
         // Setup test data
         let test_id = Uuid::parse_str(TEST_ID).unwrap();
@@ -155,10 +201,19 @@ mod tests {
         );
 
         // setup router: sync settings of main.app
-        Router::new().nest(
+        let router = Router::new().nest(
             "/api",
             create_user_router(login_usecase, register_user_usecase),
-        )
+        );
+
+        (router, db, schema_name)
+    }
+
+    async fn cleanup_test_db(db: &sea_orm::DatabaseConnection, schema_name: &str) {
+        use sea_orm::ConnectionTrait;
+        db.execute_unprepared(&format!("DROP SCHEMA {} CASCADE", schema_name))
+            .await
+            .expect("Failed to drop schema");
     }
 
     // Login usecase
@@ -181,10 +236,9 @@ mod tests {
         .unwrap()
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_login_positive(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_login_positive() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let user_id = "test_user".to_string();
@@ -205,12 +259,13 @@ mod tests {
         let login_response: LoginResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(TEST_ID, login_response.user.id);
         assert_eq!(user_id, login_response.user.acct);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_login_invalid_user_negative(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_login_invalid_user_negative() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let user_id = "invalid_user".to_string();
@@ -226,12 +281,13 @@ mod tests {
 
         // validation
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_login_invalid_password_negative(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_login_invalid_password_negative() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let user_id = "test_user".to_string();
@@ -247,6 +303,8 @@ mod tests {
 
         // validation
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 
     // Register usecase
@@ -268,10 +326,9 @@ mod tests {
         .unwrap()
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_register_positive(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_register_positive() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let new_user_id = "new_user";
@@ -306,12 +363,13 @@ mod tests {
         let login_response: LoginResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(new_user_id, login_response.user.acct);
         assert_eq!("テスト", login_response.user.display_name);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_register_duplicated_user_negative(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_register_duplicated_user_negative() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let new_user_id = "test_user";
@@ -329,12 +387,13 @@ mod tests {
         // send request
         let response = register(app, body).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 
-    #[rstest]
     #[tokio::test]
-    async fn test_register_duplicated_email_negative(#[future] test_app: Router) {
-        let app = test_app.await;
+    async fn test_register_duplicated_email_negative() {
+        let (app, db, schema_name) = setup_test_db().await;
 
         // create request body
         let new_user_id = "new_user";
@@ -354,5 +413,7 @@ mod tests {
 
         // validation
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        cleanup_test_db(&db, &schema_name).await;
     }
 }
