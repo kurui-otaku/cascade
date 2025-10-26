@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use crate::domain::{
@@ -75,5 +75,25 @@ impl UserRepository for PostgresUserRepository {
             }
             None => Ok(None),
         }
+    }
+
+    async fn register_user(
+        &self,
+        activity_id: &ActivityId,
+        display_name: &str,
+    ) -> Result<Uuid, RepositoryError> {
+        let id = Uuid::new_v4();
+        let user_model = users::ActiveModel {
+            id: Set(id),
+            activity_id: Set(activity_id.as_str().to_string()),
+            name: Set(display_name.to_string()),
+            summary: Set(String::new()),
+            icon: Set(None),
+        };
+        let insert_result = users::Entity::insert(user_model)
+            .exec(&self.db)
+            .await
+            .map_err(|e| RepositoryError::DatabaseError(e.to_string()))?;
+        Ok(insert_result.last_insert_id)
     }
 }

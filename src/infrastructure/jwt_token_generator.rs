@@ -3,7 +3,9 @@ use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{
-    error::DomainError, models::user::User, services::token_service::TokenGenerator,
+    error::DomainError,
+    models::user::User,
+    services::token_service::{Token, TokenGenerator},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,7 +39,7 @@ impl JwtTokenGenerator {
 }
 
 impl TokenGenerator for JwtTokenGenerator {
-    fn generate(&self, user: &User) -> Result<String, DomainError> {
+    fn generate(&self, user: &User) -> Result<Token, DomainError> {
         let now = Utc::now();
         let exp = now + Duration::hours(self.expiration_hours);
 
