@@ -3,7 +3,9 @@ use std::sync::Arc;
 use crate::{
     domain::{
         repositories::{
-            credential_repository::CredentialRepository, user_repository::UserRepository,
+            credential_repository::CredentialRepository,
+            user_registration_repository::UserRegistrationRepository,
+            user_repository::UserRepository,
         },
         services::{password_service::PasswordHasher, token_service::TokenGenerator},
     },
@@ -100,11 +102,12 @@ fn extract_host(url: &str) -> Option<String> {
 pub fn create_user_router<
     C: CredentialRepository + Send + Sync + 'static + Clone,
     U: UserRepository + Send + Sync + 'static + Clone,
+    R: UserRegistrationRepository + Send + Sync + 'static + Clone,
     P: PasswordHasher + Send + Sync + 'static + Clone,
     T: TokenGenerator + Send + Sync + 'static + Clone,
 >(
     login_service: LoginUsecase<C, U, P, T>,
-    register_service: RegisterUserUsecase<C, U, P, T>,
+    register_service: RegisterUserUsecase<R, P, T>,
 ) -> Router {
     let state = AppState {
         login_service: Arc::new(login_service),
@@ -113,7 +116,7 @@ pub fn create_user_router<
 
     Router::new()
         .route("/login", post(login::<C, U, P, T>))
-        .route("/register", post(register::<C, U, P, T>))
+        .route("/register", post(register::<R, P, T>))
         .with_state(state)
 }
 
@@ -121,11 +124,12 @@ pub fn create_user_router<
 pub struct AppState<
     C: CredentialRepository,
     U: UserRepository,
+    R: UserRegistrationRepository,
     P: PasswordHasher,
     T: TokenGenerator,
 > {
     pub login_service: Arc<LoginUsecase<C, U, P, T>>,
-    pub register_service: Arc<RegisterUserUsecase<C, U, P, T>>,
+    pub register_service: Arc<RegisterUserUsecase<R, P, T>>,
 }
 
 // handler function
@@ -137,7 +141,7 @@ async fn login<
     P: PasswordHasher + Send + Sync,
     T: TokenGenerator + Send + Sync,
 >(
-    State(state): State<AppState<C, U, P, T>>,
+    State(state): State<AppState<C, U, impl UserRegistrationRepository, P, T>>,
     Json(payload): Json<LoginRequest>,
 ) -> impl IntoResponse {
     match state
@@ -158,12 +162,11 @@ async fn login<
 
 /// handler function for register
 async fn register<
-    C: CredentialRepository + Send + Sync,
-    U: UserRepository + Send + Sync,
+    R: UserRegistrationRepository + Send + Sync,
     P: PasswordHasher + Send + Sync,
     T: TokenGenerator + Send + Sync,
 >(
-    State(state): State<AppState<C, U, P, T>>,
+    State(state): State<AppState<impl CredentialRepository, impl UserRepository, R, P, T>>,
     Json(payload): Json<RegisterRequest>,
 ) -> impl IntoResponse {
     match state

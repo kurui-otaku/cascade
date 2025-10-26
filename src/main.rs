@@ -12,7 +12,9 @@ use crate::{
     infrastructure::{
         argon2_password_hasher::Argon2PasswordHasher,
         credential_repository::PostgresCredentialRepository,
-        jwt_token_generator::JwtTokenGenerator, user_repository::PostgresUserRepository,
+        jwt_token_generator::JwtTokenGenerator,
+        user_registration_repository::PostgresUserRegistrationRepository,
+        user_repository::PostgresUserRepository,
     },
     presentation::handlers::user_handler::create_user_router,
     usecase::{
@@ -34,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Connection to DB failed");
     let user_repository = PostgresUserRepository::new(db.clone());
     let credential_repository = PostgresCredentialRepository::new(db.clone());
+    let registration_repository = PostgresUserRegistrationRepository::new(db.clone());
     let password_hasher = Argon2PasswordHasher::new();
     let token_generator = JwtTokenGenerator::new("testtoken".to_string());
     let login_service = LoginUsecase::new(
@@ -43,8 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         token_generator.clone(),
     );
     let register_user_usecase = RegisterUserUsecase::new(
-        credential_repository.clone(),
-        user_repository.clone(),
+        registration_repository,
         password_hasher.clone(),
         token_generator.clone(),
     );
@@ -84,7 +86,9 @@ mod tests {
                 user::{ActivityId, User},
             },
             repositories::{
-                credential_repository::CredentialRepository, user_repository::UserRepository,
+                credential_repository::CredentialRepository,
+                user_registration_repository::UserRegistrationRepository,
+                user_repository::UserRepository,
             },
             services::{password_service::PasswordHasher, token_service::TokenGenerator},
         },
@@ -171,6 +175,31 @@ mod tests {
     }
 
     #[derive(Clone)]
+    struct MockUserRegistrationRepository;
+
+    #[async_trait]
+    impl UserRegistrationRepository for MockUserRegistrationRepository {
+        async fn register_user_with_credentials(
+            &self,
+            activity_id: &ActivityId,
+            display_name: &str,
+            _password_hash: HashedPassword,
+            email: String,
+        ) -> Result<User, RepositoryError> {
+            if activity_id.as_str().contains("duplicated_user") {
+                Err(RepositoryError::DatabaseError("User already exists".to_string()))
+            } else if email.contains("duplicated") {
+                Err(RepositoryError::DatabaseError("Email already exists".to_string()))
+            } else {
+                let id = Uuid::parse_str(TEST_ID).unwrap();
+                let user = User::new(id, activity_id.clone(), display_name.to_string(), None)
+                    .expect("Failed to create user");
+                Ok(user)
+            }
+        }
+    }
+
+    #[derive(Clone)]
     struct MockPasswordHasher;
 
     impl PasswordHasher for MockPasswordHasher {
@@ -202,23 +231,23 @@ mod tests {
         // set up mock repository
         let mock_credential_repo = MockCredentialRepository;
         let mock_user_repo = MockUserRepository;
+        let mock_registration_repo = MockUserRegistrationRepository;
         let mock_password_hasher = MockPasswordHasher;
         let mock_token_generator = MockTokenGenerator;
 
         // create service of LoginUsecase
         let login_usecase = LoginUsecase::new(
-            mock_credential_repo.clone(),
-            mock_user_repo.clone(),
+            mock_credential_repo,
+            mock_user_repo,
             mock_password_hasher.clone(),
             mock_token_generator.clone(),
         );
 
         // create service of RegisterUserUsecase
         let register_user_usecase = RegisterUserUsecase::new(
-            mock_credential_repo.clone(),
-            mock_user_repo.clone(),
-            mock_password_hasher.clone(),
-            mock_token_generator.clone(),
+            mock_registration_repo,
+            mock_password_hasher,
+            mock_token_generator,
         );
 
         // setup router: sync settings of main.app
