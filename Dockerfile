@@ -1,4 +1,4 @@
-FROM rust:1.86-bookworm as builder
+FROM rust:1.90-bookworm as builder
 
 RUN cargo install bacon --locked
 

@@ -1,6 +1,6 @@
 use crate::domain::{
     error::{DomainError, RepositoryError},
-    models::user::User,
+    models::user::{ActivityId, User},
     repositories::{credential_repository::CredentialRepository, user_repository::UserRepository},
     services::{
         password_service::PasswordHasher,
@@ -51,7 +51,12 @@ impl<C: CredentialRepository, U: UserRepository, P: PasswordHasher, T: TokenGene
         T: Send + Sync,
     {
         // Get credential from repository
-        let credential = self.credential_repository.get_credential(user_id).await?;
+        let instance_host = dotenvy::var("INSTANCE_HOST").unwrap();
+        let activity_id = ActivityId::new(format!("https://{}/users/{}", instance_host, user_id))?;
+        let credential = self
+            .credential_repository
+            .get_credential(activity_id)
+            .await?;
 
         // Verify password using PasswordHasher
         let is_valid = self

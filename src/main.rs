@@ -63,7 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
     use axum::{
         Router,
         body::Body,
@@ -72,187 +71,87 @@ mod tests {
     };
     use http_body_util::BodyExt;
     use rstest::*;
+    use sea_orm::{ActiveModelTrait, ConnectOptions, Database, Set};
     use tower::ServiceExt;
     use uuid::Uuid;
 
     use crate::{
-        domain::{
-            error::{DomainError, RepositoryError},
-            models::{
-                credential::{Credential, HashedPassword},
-                user::{ActivityId, User},
-            },
-            repositories::{
-                credential_repository::CredentialRepository,
-                user_registration_repository::UserRegistrationRepository,
-                user_repository::UserRepository,
-            },
-            services::{password_service::PasswordHasher, token_service::TokenGenerator},
+        domain::services::password_service::PasswordHasher,
+        infrastructure::{
+            argon2_password_hasher::Argon2PasswordHasher,
+            credential_repository::PostgresCredentialRepository,
+            jwt_token_generator::JwtTokenGenerator,
+            user_registration_repository::PostgresUserRegistrationRepository,
+            user_repository::PostgresUserRepository,
         },
         presentation::handlers::user_handler::{
             LoginRequest, LoginResponse, RegisterRequest, create_user_router,
         },
         usecase::{login_usecase::LoginUsecase, register_user_usecase::RegisterUserUsecase},
     };
+    use entity::{credentials, users};
 
     const TEST_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-    // mock repository interface
-    #[derive(Clone)]
-    struct MockCredentialRepository;
-
-    #[async_trait]
-    impl CredentialRepository for MockCredentialRepository {
-        async fn get_credential(&self, user_id: String) -> Result<Credential, RepositoryError> {
-            if user_id.as_str() == "testuser" {
-                let id = Uuid::parse_str(TEST_ID).unwrap();
-                let password_hash = HashedPassword::new("mock_hash".to_string());
-                Ok(Credential::new(id, user_id, password_hash))
-            } else {
-                Err(RepositoryError::NotFound)
-            }
-        }
-
-        async fn create_credential(
-            &self,
-            _id: Uuid,
-            _user_id: ActivityId,
-            _password_hash: HashedPassword,
-            email: String,
-        ) -> Result<(), RepositoryError> {
-            if email.contains("duplicated") {
-                Err(RepositoryError::DatabaseError(
-                    "Email already exists".to_string(),
-                ))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    #[derive(Clone)]
-    struct MockUserRepository;
-
-    #[async_trait]
-    impl UserRepository for MockUserRepository {
-        async fn find_by_username(&self, username: &str) -> Result<Option<User>, RepositoryError> {
-            // "testuser"用のユーザー情報を返す
-            if username == "testuser" {
-                let id = Uuid::parse_str(TEST_ID).unwrap();
-                let activity_id =
-                    ActivityId::new("https://example.com/users/testuser".to_string()).unwrap();
-                let user = User::new(id, activity_id, "testuser".to_string(), None).unwrap();
-                Ok(Some(user))
-            } else {
-                Ok(None)
-            }
-        }
-
-        async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, RepositoryError> {
-            if id.to_string() == TEST_ID {
-                let user_id = Uuid::parse_str(TEST_ID).unwrap();
-                let activity_id =
-                    ActivityId::new("https://example.com/users/testuser".to_string()).unwrap();
-                let user = User::new(user_id, activity_id, "testuser".to_string(), None).unwrap();
-                Ok(Some(user))
-            } else {
-                Ok(None)
-            }
-        }
-
-        async fn register_user(
-            &self,
-            activity_id: &ActivityId,
-            _display_name: &str,
-        ) -> Result<Uuid, RepositoryError> {
-            if activity_id.as_str().contains("duplicated_user") {
-                Err(RepositoryError::DatabaseError(
-                    "User already exists".to_string(),
-                ))
-            } else {
-                Ok(Uuid::parse_str(TEST_ID).unwrap())
-            }
-        }
-    }
-
-    #[derive(Clone)]
-    struct MockUserRegistrationRepository;
-
-    #[async_trait]
-    impl UserRegistrationRepository for MockUserRegistrationRepository {
-        async fn register_user_with_credentials(
-            &self,
-            activity_id: &ActivityId,
-            display_name: &str,
-            _password_hash: HashedPassword,
-            email: String,
-        ) -> Result<User, RepositoryError> {
-            if activity_id.as_str().contains("duplicated_user") {
-                Err(RepositoryError::DatabaseError(
-                    "User already exists".to_string(),
-                ))
-            } else if email.contains("duplicated") {
-                Err(RepositoryError::DatabaseError(
-                    "Email already exists".to_string(),
-                ))
-            } else {
-                let id = Uuid::parse_str(TEST_ID).unwrap();
-                let user = User::new(id, activity_id.clone(), display_name.to_string(), None)
-                    .expect("Failed to create user");
-                Ok(user)
-            }
-        }
-    }
-
-    #[derive(Clone)]
-    struct MockPasswordHasher;
-
-    impl PasswordHasher for MockPasswordHasher {
-        fn hash(&self, _plain_password: &str) -> Result<HashedPassword, DomainError> {
-            Ok(HashedPassword::new("mock_hash".to_string()))
-        }
-
-        fn verify(
-            &self,
-            _plain_password: &str,
-            _hashed_password: &HashedPassword,
-        ) -> Result<bool, DomainError> {
-            // Always return true for test
-            Ok(true)
-        }
-    }
-
-    #[derive(Clone)]
-    struct MockTokenGenerator;
-
-    impl TokenGenerator for MockTokenGenerator {
-        fn generate(&self, _user: &User) -> Result<String, DomainError> {
-            Ok("mock_token".to_string())
-        }
-    }
-
     #[fixture]
     async fn test_app() -> Router {
-        // set up mock repository
-        let mock_credential_repo = MockCredentialRepository;
-        let mock_user_repo = MockUserRepository;
-        let mock_registration_repo = MockUserRegistrationRepository;
-        let mock_password_hasher = MockPasswordHasher;
-        let mock_token_generator = MockTokenGenerator;
+        dotenvy::from_path("../.env").unwrap();
+        let mut opt = ConnectOptions::new(dotenvy::var("TEST_DATABASE_URL").unwrap());
+        opt.max_connections(10)
+            .min_connections(1)
+            .sqlx_logging(true);
 
-        // create service of LoginUsecase
+        let db = Database::connect(opt)
+            .await
+            .expect("Connection to DB failed");
+
+        // Truncate tables for clean test environment
+        use sea_orm::ConnectionTrait;
+        db.execute_unprepared("TRUNCATE TABLE credentials, users RESTART IDENTITY CASCADE")
+            .await
+            .expect("Failed to truncate tables");
+
+        // Setup test data
+        let test_id = Uuid::parse_str(TEST_ID).unwrap();
+        let instance_host = dotenvy::var("INSTANCE_HOST").unwrap();
+        let password_hasher = Argon2PasswordHasher::new();
+
+        // Create test user
+        let user = users::ActiveModel {
+            id: Set(test_id),
+            activity_id: Set(format!("https://{}/users/test_user", instance_host)),
+            name: Set("テスト".to_string()),
+            summary: Set("".to_string()),
+            icon: Set(None),
+        };
+        let _ = user.insert(&db).await;
+
+        // Create test credential with hashed password
+        let password_hash = password_hasher.hash("test_password").unwrap();
+        let credential = credentials::ActiveModel {
+            user_id: Set(test_id),
+            activity_id: Set(format!("https://{}/users/test_user", instance_host)),
+            password_hash: Set(password_hash.as_str().to_string()),
+            email: Set("test@example.com".to_string()),
+            created_at: Set(chrono::Utc::now().into()),
+            updated_at: Set(chrono::Utc::now().into()),
+        };
+        let _ = credential.insert(&db).await;
+
+        let user_repository = PostgresUserRepository::new(db.clone());
+        let credential_repository = PostgresCredentialRepository::new(db.clone());
+        let registration_repository = PostgresUserRegistrationRepository::new(db.clone());
+        let token_generator = JwtTokenGenerator::new("testtoken".to_string());
         let login_usecase = LoginUsecase::new(
-            mock_credential_repo,
-            mock_user_repo,
-            mock_password_hasher.clone(),
-            mock_token_generator.clone(),
+            credential_repository.clone(),
+            user_repository.clone(),
+            password_hasher.clone(),
+            token_generator.clone(),
         );
-
-        // create service of RegisterUserUsecase
         let register_user_usecase = RegisterUserUsecase::new(
-            mock_registration_repo,
-            mock_password_hasher,
-            mock_token_generator,
+            registration_repository,
+            password_hasher.clone(),
+            token_generator.clone(),
         );
 
         // setup router: sync settings of main.app
@@ -288,7 +187,7 @@ mod tests {
         let app = test_app.await;
 
         // create request body
-        let user_id = "testuser".to_string();
+        let user_id = "test_user".to_string();
         let password = "test_password".to_string();
         let login_request = LoginRequest {
             user_id: user_id.clone(),
@@ -335,8 +234,8 @@ mod tests {
         let app = test_app.await;
 
         // create request body
-        let user_id = "test_password".to_string();
-        let password = "test_password".to_string();
+        let user_id = "test_user".to_string();
+        let password = "invalid_password".to_string();
         let login_request = LoginRequest {
             user_id: user_id.clone(),
             password: password.clone(),
@@ -377,7 +276,7 @@ mod tests {
         // create request body
         let new_user_id = "new_user";
         let new_password = "new_password";
-        let new_mail_adress = "test@example.com";
+        let new_mail_adress = "new@example.com";
         let new_display_name = "テスト";
         let register_request = RegisterRequest {
             user_id: new_user_id.to_string(),
@@ -405,8 +304,8 @@ mod tests {
         let body = response.into_body();
         let bytes = body.collect().await.unwrap().to_bytes();
         let login_response: LoginResponse = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(TEST_ID, login_response.user.id);
         assert_eq!(new_user_id, login_response.user.acct);
+        assert_eq!("テスト", login_response.user.display_name);
     }
 
     #[rstest]
@@ -415,9 +314,9 @@ mod tests {
         let app = test_app.await;
 
         // create request body
-        let new_user_id = "duplicated_user";
+        let new_user_id = "test_user";
         let new_password = "new_password";
-        let new_mail_adress = "test@example.com";
+        let new_mail_adress = "new@example.com";
         let new_display_name = "テスト";
         let register_request = RegisterRequest {
             user_id: new_user_id.to_string(),
@@ -440,7 +339,7 @@ mod tests {
         // create request body
         let new_user_id = "new_user";
         let new_password = "new_password";
-        let new_mail_adress = "duplicated@example.com";
+        let new_mail_adress = "test@example.com";
         let new_display_name = "テスト";
         let register_request = RegisterRequest {
             user_id: new_user_id.to_string(),

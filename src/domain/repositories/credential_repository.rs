@@ -11,7 +11,7 @@ use crate::domain::{
 
 #[async_trait]
 pub trait CredentialRepository {
-    async fn get_credential(&self, user_id: String) -> Result<Credential, RepositoryError>;
+    async fn get_credential(&self, user_id: ActivityId) -> Result<Credential, RepositoryError>;
     async fn create_credential(
         &self,
         id: Uuid,
