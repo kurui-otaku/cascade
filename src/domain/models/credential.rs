@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use sea_orm::prelude::Uuid;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::error::DomainError;
+use crate::domain::{error::DomainError, models::user::ActivityId};
 
 /// Value object representing a hashed password
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,14 +23,14 @@ impl HashedPassword {
 #[derive(Debug, Clone)]
 pub struct Credential {
     id: Uuid,
-    user_id: String,
+    user_id: ActivityId,
     password_hash: HashedPassword,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
 impl Credential {
-    pub fn new(id: Uuid, user_id: String, password_hash: HashedPassword) -> Self {
+    pub fn new(id: Uuid, user_id: ActivityId, password_hash: HashedPassword) -> Self {
         let now = Utc::now();
         Self {
             id,
@@ -43,7 +43,7 @@ impl Credential {
 
     pub fn reconstruct(
         id: Uuid,
-        user_id: String,
+        user_id: ActivityId,
         password_hash: HashedPassword,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -74,7 +74,7 @@ impl Credential {
         self.id
     }
 
-    pub fn user_id(&self) -> &String {
+    pub fn user_id(&self) -> &ActivityId {
         &self.user_id
     }
 

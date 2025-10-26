@@ -26,7 +26,7 @@ impl PostgresCredentialRepository {
 
 #[async_trait]
 impl CredentialRepository for PostgresCredentialRepository {
-    async fn get_credential(&self, user_id: String) -> Result<Credential, RepositoryError> {
+    async fn get_credential(&self, user_id: ActivityId) -> Result<Credential, RepositoryError> {
         let credential = credentials::Entity::find()
             .filter(credentials::Column::ActivityId.eq(user_id.as_str()))
             .one(&self.db)
