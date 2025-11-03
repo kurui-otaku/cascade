@@ -44,7 +44,7 @@ impl TokenGenerator for JwtTokenGenerator {
         let exp = now + Duration::hours(self.expiration_hours);
 
         let claims = Claims {
-            sub: user.id().to_string(),
+            sub: user.id().as_uuid().to_string(),
             activity_id: user.activity_id().as_str().to_string(),
             exp: exp.timestamp(),
             iat: now.timestamp(),

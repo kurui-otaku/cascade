@@ -77,7 +77,7 @@ impl From<crate::domain::models::user::User> for UserInfo {
         };
 
         Self {
-            id: user.id().to_string(),
+            id: user.id().as_uuid().to_string(),
             acct,
             display_name: user.display_name().to_string(),
         }
